@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 /* ============================================================
  * 引擎：状态管理 / 存档 / 交互 / 谜题判定 / 房间切换 / 结局
@@ -63,9 +63,39 @@ window.Engine = (function () {
       const raw = localStorage.getItem(SAVE_KEY);
       if (!raw) return false;
       const s = JSON.parse(raw);
-      Object.assign(state, s);
+      if (!s || typeof s !== 'object' || Array.isArray(s)) return false;
+
+      const inventory = Array.isArray(s.inventory)
+        ? s.inventory.filter(function (id) { return typeof id === 'string' && !!ITEMS[id]; })
+        : ['letter'];
+      state.inventory = inventory.filter(function (id, i) { return inventory.indexOf(id) === i; });
+
+      const flags = freshFlags();
+      if (s.flags && typeof s.flags === 'object' && !Array.isArray(s.flags)) {
+        Object.keys(flags).forEach(function (k) {
+          if (typeof s.flags[k] === 'boolean') flags[k] = s.flags[k];
+        });
+      }
+
+      const hints = {};
+      if (s.hints && typeof s.hints === 'object' && !Array.isArray(s.hints)) {
+        Object.keys(s.hints).forEach(function (k) {
+          const v = Number(s.hints[k]);
+          if (Number.isFinite(v) && v > 0) hints[k] = Math.min(3, Math.floor(v));
+        });
+      }
+
+      state.currentRoom = typeof s.currentRoom === 'string' && ROOM_NAMES[s.currentRoom] ? s.currentRoom : 'foyer';
+      state.selectedItem = typeof s.selectedItem === 'string' && state.inventory.indexOf(s.selectedItem) !== -1 ? s.selectedItem : null;
+      state.lampLit = Array.isArray(s.lampLit) ? s.lampLit.filter(function (id) { return typeof id === 'string'; }) : [];
+      state.flags = flags;
+      state.notes = Array.isArray(s.notes) ? s.notes.filter(function (n) { return typeof n === 'string'; }) : ['委托信：取回已故老钟表匠的传世怀表。'];
+      state.hints = hints;
+      state.hintCount = Number.isFinite(Number(s.hintCount)) ? Math.max(0, Math.floor(Number(s.hintCount))) : 0;
+      state.elapsedMs = Number.isFinite(Number(s.elapsedMs)) ? Math.max(0, Number(s.elapsedMs)) : 0;
+      state.ended = !!s.ended;
+      state.saveTime = Number.isFinite(Number(s.saveTime)) ? Number(s.saveTime) : 0;
       state.lastTick = Date.now();
-      state.flags = Object.assign(freshFlags(), s.flags || {});
       return true;
     } catch (e) { return false; }
   }
@@ -195,6 +225,7 @@ window.Engine = (function () {
           addNote('抽屉里找到发条钥匙和一张老照片。');
           AudioFX.unlock();
           save();
+          UI.renderRoom();
           msg('锁开了。抽屉里有一把发条钥匙和一张老照片。');
         });
         break;

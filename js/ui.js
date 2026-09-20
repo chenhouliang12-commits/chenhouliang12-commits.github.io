@@ -49,6 +49,8 @@ window.UI = (function () {
     $('#room-sub').textContent = ROOM_SUB[room];
     const wrap = $('#scene-wrap');
     wrap.classList.toggle('dark', room === 'basement' && !Engine.state.flags.lightsOn);
+    const sceneUrl = window.SCENE_ASSETS && window.SCENE_ASSETS[room] ? window.SCENE_ASSETS[room] : new URL('assets/scenes/' + room + '.jpg', document.baseURI).href;
+    wrap.style.setProperty('--scene-bg-image', "url('" + sceneUrl + "')");
     if (window.Scene) window.Scene.render(room, Engine.state);
     renderInventory();
   }
@@ -375,6 +377,7 @@ window.UI = (function () {
     $('#btn-settings').addEventListener('click', function () { AudioFX.click(); openSettings(); });
     $('#btn-save').addEventListener('click', function () { Engine.save(); AudioFX.click(); showDialog('进度已保存。'); });
     $('#btn-highlight').addEventListener('click', function () { AudioFX.click(); if (window.Scene) window.Scene.toggleHighlight(); });
+    $('#btn-zoom').addEventListener('click', function () { AudioFX.click(); if (window.Scene) window.Scene.toggleZoom(); });
     $('#dialog').addEventListener('click', function () { this.classList.remove('show'); });
 
     document.addEventListener('keydown', function (e) {

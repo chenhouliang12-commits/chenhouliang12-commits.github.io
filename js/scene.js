@@ -29,6 +29,7 @@
   function flashLabel(x, y, label) { if (!hoverEl) ensureHover(); hoverEl.textContent = label; hoverEl.classList.add('show'); moveHover(x, y); setTimeout(hideHover, 1100); }
 
   var litImg = null;
+  var zoomMode = false;
 
   /* ---------- 渲染 ---------- */
   function render(roomId, state) {
@@ -51,8 +52,8 @@
       var W = bg.naturalWidth, H = bg.naturalHeight;
       if (!W || !H) return;
       svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
-      buildOverlay(svg, roomId, state, W, H);
       fitFrame(W, H);
+      buildOverlay(svg, roomId, state, W, H);
       if (Editor.on) Editor.attach(scene);
     }
     if (bg.complete && bg.naturalWidth) setup();
@@ -65,10 +66,31 @@
     var w = wrap.clientWidth, h = wrap.clientHeight;
     if (!w || !h) return;
     var ratio = W / H;
-    var fw = Math.min(w, h * ratio);
-    var fh = fw / ratio;
+    var baseW = Math.min(w, h * ratio);
+    var baseH = baseW / ratio;
+    var portrait = w <= 640 && h > w;
+    var zoom = zoomMode ? (portrait ? 1.65 : 1.25) : 1;
+    var fw = baseW * zoom;
+    var fh = baseH * zoom;
     scene.style.width = fw + 'px';
     scene.style.height = fh + 'px';
+    scene.style.marginTop = zoom > 1 ? Math.max(0, (h - fh) / 2) + 'px' : '0px';
+    wrap.classList.toggle('scene-zoomed', zoom > 1);
+    if (zoom > 1) {
+      requestAnimationFrame(function () {
+        wrap.scrollLeft = Math.max(0, (scene.offsetWidth - w) / 2);
+        wrap.scrollTop = Math.max(0, (scene.offsetHeight - h) / 2);
+      });
+    } else {
+      wrap.scrollLeft = 0;
+      wrap.scrollTop = Math.max(0, (scene.offsetHeight - h) / 2);
+    }
+    var zoomBtn = document.getElementById('btn-zoom');
+    if (zoomBtn) {
+      zoomBtn.classList.toggle('active', zoom > 1);
+      zoomBtn.textContent = zoom > 1 ? '🧭' : '🔍';
+      zoomBtn.title = zoom > 1 ? '还原场景' : '放大场景';
+    }
   }
   window.addEventListener('resize', function () {
     var bg = document.querySelector('.scene-bg');
@@ -77,6 +99,11 @@
 
   function buildOverlay(svg, room, state, W, H) {
     var list = window.HOTSPOTS[room] || [];
+    var svgRect = svg.getBoundingClientRect();
+    var scaleX = svgRect.width ? svgRect.width / W : 1;
+    var scaleY = svgRect.height ? svgRect.height / H : 1;
+    var enlargeHitArea = Math.min(scaleX, scaleY) < 0.65;
+
     list.forEach(function (h) {
       var pts = h.points.map(function (p) { return p[0] + ',' + p[1]; }).join(' ');
       var clip = h.points.map(function (p) { return (p[0] / W * 100).toFixed(3) + '% ' + (p[1] / H * 100).toFixed(3) + '%'; }).join(',');
@@ -100,8 +127,56 @@
       glow.setAttribute('points', pts);
 
       g.appendChild(area); g.appendChild(glow);
+
       svg.appendChild(g);
       bindHotspot(g, h);
+    });
+    if (enlargeHitArea) bindToleranceClick(svg, list);
+  }
+
+  function activateHotspot(g, h, e) {
+    if (Editor.on) { Editor.onHotspotClick(g); return; }
+    flashLabel(e.clientX, e.clientY, h.label);
+    flash(g);
+    if (window.Engine.state.selectedItem) window.Engine.useSelectedOn(h.id);
+    else window.Engine.click(h.id);
+  }
+
+  function pointInPolygon(p, pts) {
+    var inside = false;
+    for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      var xi = pts[i][0], yi = pts[i][1], xj = pts[j][0], yj = pts[j][1];
+      if (((yi > p.y) !== (yj > p.y)) && (p.x < (xj - xi) * (p.y - yi) / ((yj - yi) || 1e-9) + xi)) inside = !inside;
+    }
+    return inside;
+  }
+
+  function distanceToPolygon(p, pts) {
+    if (pointInPolygon(p, pts)) return 0;
+    var d = Infinity;
+    for (var i = 0; i < pts.length; i++) d = Math.min(d, distToSeg([p.x, p.y], pts[i], pts[(i + 1) % pts.length]));
+    return d;
+  }
+
+  function bindToleranceClick(svg, list) {
+    svg.addEventListener('click', function (e) {
+      if (e.target.closest && e.target.closest('.hotspot')) return;
+      var ctm = svg.getScreenCTM();
+      if (!ctm) return;
+      var pt = svg.createSVGPoint();
+      pt.x = e.clientX; pt.y = e.clientY;
+      var local = pt.matrixTransform(ctm.inverse());
+      var scale = Math.sqrt(ctm.a * ctm.a + ctm.b * ctm.b) || 1;
+      var threshold = 22 / scale;
+      var best = null, bestDistance = Infinity;
+      list.forEach(function (h) {
+        var d = distanceToPolygon(local, h.points);
+        if (d < bestDistance) { bestDistance = d; best = h; }
+      });
+      if (best && bestDistance <= threshold) {
+        var g = svg.querySelector('.hotspot[data-hotspot="' + best.id + '"]');
+        if (g) activateHotspot(g, best, e);
+      }
     });
   }
 
@@ -114,11 +189,7 @@
     g.addEventListener('mouseleave', function () { lightDown(g); hideHover(); });
     g.addEventListener('click', function (e) {
       e.stopPropagation();
-      if (Editor.on) { Editor.onHotspotClick(g); return; }
-      flashLabel(e.clientX, e.clientY, h.label);
-      flash(g);
-      if (window.Engine.state.selectedItem) window.Engine.useSelectedOn(h.id);
-      else window.Engine.click(h.id);
+      activateHotspot(g, h, e);
     });
   }
 
@@ -540,5 +611,11 @@
     if (Editor.on && Editor.mode === 'poly' && Editor.drawPts.length >= 3) Editor.finishDraw();
   });
 
-  window.Scene = { render: render, toggleHighlight: toggleHighlight, onKey: onKey, Editor: Editor };
+  function toggleZoom() {
+    zoomMode = !zoomMode;
+    var bg = document.querySelector('.scene-bg');
+    if (bg && bg.naturalWidth) fitFrame(bg.naturalWidth, bg.naturalHeight);
+  }
+
+  window.Scene = { render: render, toggleHighlight: toggleHighlight, toggleZoom: toggleZoom, onKey: onKey, Editor: Editor };
 })();
